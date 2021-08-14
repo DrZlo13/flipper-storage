@@ -126,7 +126,7 @@ class FlipperStorage:
         self.send_and_wait_eol('storage read "' + filename + '"\r')
         size = self.read.until(self.CLI_EOL)
         size = int(size.split(b': ')[1])
-        # TODO read in chunks
+        # TODO read by chunks
         filedata = self.port.read(size)
         self.read.until(self.CLI_PROMPT)
         return filedata
