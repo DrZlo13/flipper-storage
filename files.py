@@ -121,13 +121,14 @@ class FlipperStorage:
         self.read.until(self.CLI_EOL)
         size = self.read.until(self.CLI_EOL)
         size = int(size.split(b': ')[1])
-        return self.port.read(size)
+        filedata = self.port.read(size)
+        self.read.until(self.CLI_PROMPT)
+        return filedata
 
     def receive_file(self, filename_from, filename_to):
         file = open(filename_to, 'wb')
         file.write(self.read_file(filename_from))
         file.close()
-        self.read.until(self.CLI_PROMPT)
 
 file = FlipperStorage('COM16')
 file.start()
@@ -138,7 +139,7 @@ file.receive_file('/ext/test.file', 'test2.file')
 #     print('OK')
 # else:
 #     print('Error')
-# os.remove("test2.file")
+#os.remove("test2.file")
 
 file.list_tree()
 file.stop()
