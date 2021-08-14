@@ -10,7 +10,7 @@ def timing(f):
         return ret
     return wrap
 
-class BufferedReaded:
+class BufferedRead:
     def __init__(self, stream):
         self.buffer = bytearray()
         self.stream = stream
@@ -43,7 +43,7 @@ class FlipperStorage:
         self.port.port = portname
         self.port.timeout = 2
         self.port.baudrate = 115200
-        self.read = BufferedReaded(self.port)
+        self.read = BufferedRead(self.port)
 
     def start(self):
         self.port.open()
