@@ -102,6 +102,7 @@ class FlipperStorage:
                 line = line[1].rsplit(" ", 1)
                 print(line[0] + ', size ' + line[1])
 
+    @timing
     def send_file(self, filename_from, filename_to):
         self.send_and_wait_prompt('storage remove "' + filename_to +  '"\r')
 
@@ -114,9 +115,8 @@ class FlipperStorage:
             size = len(filedata)
             if(size == 0):
                 break
-            self.send_and_wait_eol('storage write "' + filename_to +  '" ' + str(size) + '\r')
+            self.send_and_wait_eol('storage write_raw "' + filename_to +  '" ' + str(size) + '\r')
             self.port.write(filedata)
-            self.port.read(size)
             self.read.until(self.CLI_PROMPT)
             print(str(round(file.tell() / filesize * 100)) + '%', end='\r')
         file.close()
@@ -136,9 +136,9 @@ class FlipperStorage:
         file.write(self.read_file(filename_from))
         file.close()
 
-FILE_HERE = 'tv_ir.txt'
-FILE_HERE_TMP = 'tv_ir.txt.tmp'
-FILE_ON_FLIPPER = '/ext/tv_ir.txt'
+FILE_HERE = '100k.txt'
+FILE_HERE_TMP = '100k.tmp'
+FILE_ON_FLIPPER = '/ext/100k.txt'
 
 file = FlipperStorage('COM16')
 file.start()
@@ -151,5 +151,5 @@ else:
     print('Error')
 os.remove(FILE_HERE_TMP)
 
-file.list_tree()
+#file.list_tree()
 file.stop()
