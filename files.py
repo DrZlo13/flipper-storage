@@ -117,7 +117,7 @@ class FlipperStorage:
                 break
 
             self.send_and_wait_eol('storage write_chunk "' + filename_to +  '" ' + str(size) + '\r')
-            self.read.until('Ready?' + self.CLI_EOL)
+            self.read.until('Ready' + self.CLI_EOL)
 
             self.port.write(filedata)
             self.read.until(self.CLI_PROMPT)
