@@ -115,30 +115,52 @@ class FlipperStorage:
             size = len(filedata)
             if(size == 0):
                 break
-            self.send_and_wait_eol('storage write_raw "' + filename_to +  '" ' + str(size) + '\r')
+
+            self.send_and_wait_eol('storage write_chunk "' + filename_to +  '" ' + str(size) + '\r')
+            self.read.until('Ready?' + self.CLI_EOL)
+
             self.port.write(filedata)
             self.read.until(self.CLI_PROMPT)
-            print(str(round(file.tell() / filesize * 100)) + '%', end='\r')
+
+            percent = str(round(file.tell() / filesize * 100))
+            total_chunks = str(round(filesize / BUFFER_SIZE)) 
+            current_chunk = str(round(file.tell() / BUFFER_SIZE)) 
+            print(percent + '%, chunk ' + current_chunk + ' of ' + total_chunks, end='\r')
         file.close()
         print()
 
     def read_file(self, filename):
-        self.send_and_wait_eol('storage read "' + filename + '"\r')
+        BUFFER_SIZE = 512
+        self.send_and_wait_eol('storage read_chunks "' + filename + '" ' + str(BUFFER_SIZE) + '\r')
         size = self.read.until(self.CLI_EOL)
         size = int(size.split(b': ')[1])
-        # TODO read by chunks
-        filedata = self.port.read(size)
-        self.read.until(self.CLI_PROMPT)
+        readed_size = 0
+        filedata = bytearray()
+
+        while readed_size < size:
+            self.read.until('Ready?' + self.CLI_EOL)
+            self.send('y')
+            read_size = min(size - readed_size, BUFFER_SIZE)
+            filedata.extend(self.port.read(read_size))
+            readed_size = readed_size + read_size
+
+            percent = str(round(readed_size / size * 100))
+            total_chunks = str(round(size / BUFFER_SIZE))
+            current_chunk = str(round(readed_size / BUFFER_SIZE))
+            print(percent + '%, chunk ' + current_chunk + ' of ' + total_chunks, end='\r')
+
+        print()
         return filedata
 
+    @timing
     def receive_file(self, filename_from, filename_to):
         file = open(filename_to, 'wb')
         file.write(self.read_file(filename_from))
         file.close()
 
-FILE_HERE = '100k.txt'
-FILE_HERE_TMP = '100k.tmp'
-FILE_ON_FLIPPER = '/ext/100k.txt'
+FILE_HERE = '1000k.txt'
+FILE_HERE_TMP = FILE_HERE + '.tmp'
+FILE_ON_FLIPPER = '/ext/' + FILE_HERE
 
 file = FlipperStorage('COM16')
 file.start()
