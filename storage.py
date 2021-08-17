@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import binascii
+import posixpath
 
 class Main:
     def __init__(self):
@@ -25,14 +26,19 @@ class Main:
         self.parser_read.add_argument("-fp", "--flipper-path", help="Flipper path", required=True)
         self.parser_read.set_defaults(func=self.read)
 
+        self.parser_size = self.subparsers.add_parser("size", help="Size of file")
+        self.parser_size.add_argument("-fp", "--flipper-path", help="Flipper path", required=True)
+        self.parser_size.set_defaults(func=self.size)
+
         self.parser_receive = self.subparsers.add_parser("receive", help="Receive file")
         self.parser_receive.add_argument("-fp", "--flipper-path", help="Flipper path", required=True)
         self.parser_receive.add_argument("-lp", "--local-path", help="Local path", required=True)
         self.parser_receive.set_defaults(func=self.receive)
 
-        self.parser_send = self.subparsers.add_parser("send", help="Send file")
+        self.parser_send = self.subparsers.add_parser("send", help="Send file or directory")
         self.parser_send.add_argument("-fp", "--flipper-path", help="Flipper path", required=True)
         self.parser_send.add_argument("-lp", "--local-path", help="Local path", required=True)
+        self.parser_send.add_argument("-f", "--force", help="Force sending", action="store_true")
         self.parser_send.set_defaults(func=self.send)
 
         self.parser_list = self.subparsers.add_parser("list", help="Recursively list files and dirs")
@@ -76,21 +82,106 @@ class Main:
     def receive(self):
         storage = FlipperStorage(self.args.port)
         storage.start()
-        self.logger.debug(f'Receiving "{self.args.flipper_path}" to "{self.args.local_path}"')
-        if not storage.receive_file(self.args.flipper_path, self.args.local_path):
-            self.logger.error(f'Error: {storage.last_error}')
+        
+        if storage.exist_dir(self.args.flipper_path):
+            for dirpath, dirnames, filenames in storage.walk(self.args.flipper_path):
+                self.logger.debug(f'Processing directory "{os.path.normpath(dirpath)}"'.replace(os.sep, '/'))
+                dirnames.sort()
+                filenames.sort()
+
+                rel_path = os.path.relpath(dirpath, self.args.flipper_path)
+
+                for dirname in dirnames:
+                    local_dir_path = os.path.join(self.args.local_path, rel_path, dirname)
+                    local_dir_path = os.path.normpath(local_dir_path)
+                    os.makedirs(local_dir_path, exist_ok=True)
+
+                for filename in filenames:
+                    local_file_path = os.path.join(self.args.local_path, rel_path, filename)
+                    local_file_path = os.path.normpath(local_file_path)
+                    flipper_file_path = os.path.normpath(os.path.join(dirpath, filename)).replace(os.sep, '/')
+                    self.logger.info(f'Receiving "{flipper_file_path}" to "{local_file_path}"')
+                    if not storage.receive_file(flipper_file_path, local_file_path):
+                        self.logger.error(f'Error: {storage.last_error}')
+                    
+        else:
+            self.logger.info(f'Receiving "{self.args.flipper_path}" to "{self.args.local_path}"')
+            if not storage.receive_file(self.args.flipper_path, self.args.local_path):
+                self.logger.error(f'Error: {storage.last_error}')
         storage.stop()
 
     def send(self):
         storage = FlipperStorage(self.args.port)
         storage.start()
-        self.logger.debug(f'Sending "{self.args.local_path}" to "{self.args.flipper_path}"')
-        if not os.path.isfile(self.args.local_path):
-            self.logger.error(f'Error: local file is not exist')
-        else:
-            if not storage.send_file(self.args.local_path, self.args.flipper_path):
-                self.logger.error(f'Error: {storage.last_error}')
+        self.send_to_storage(storage, self.args.flipper_path, self.args.local_path, self.args.force)
         storage.stop()
+
+    # send file or folder recursively
+    def send_to_storage(self, storage, flipper_path, local_path, force):
+        if not os.path.exists(local_path):
+            self.logger.error(f'Error: "{local_path}" is not exist')
+
+        if os.path.isdir(local_path):
+            # create parent dir
+            self.mkdir_on_storage(storage, flipper_path)
+
+            for dirpath, dirnames, filenames in os.walk(local_path):
+                self.logger.debug(f'Processing directory "{os.path.normpath(dirpath)}"')
+                dirnames.sort()
+                filenames.sort()
+                rel_path = os.path.relpath(dirpath, local_path)
+
+                # create subdirs
+                for dirname in dirnames:
+                    flipper_dir_path = os.path.join(flipper_path, rel_path, dirname)
+                    flipper_dir_path = os.path.normpath(flipper_dir_path).replace(os.sep, '/')
+                    self.mkdir_on_storage(storage, flipper_dir_path)
+
+                # send files
+                for filename in filenames:
+                    flipper_file_path = os.path.join(flipper_path, rel_path, filename)
+                    flipper_file_path = os.path.normpath(flipper_file_path).replace(os.sep, '/')
+                    local_file_path = os.path.normpath(os.path.join(dirpath, filename))
+                    self.send_file_to_storage(storage, flipper_file_path, local_file_path, force)
+        else:
+            self.send_file_to_storage(storage, flipper_path, local_path, force)
+
+    # make directory with exist check
+    def mkdir_on_storage(self, storage, flipper_dir_path):
+        if not storage.exist_dir(flipper_dir_path):
+            self.logger.debug(f'"{flipper_dir_path}" not exist, creating')
+            if not storage.mkdir(flipper_dir_path):
+                self.logger.error(f'Error: {storage.last_error}')
+        else:
+            self.logger.debug(f'"{flipper_dir_path}" already exist')
+
+    # send file with exist check and hash check
+    def send_file_to_storage(self, storage, flipper_file_path, local_file_path, force):
+        if not storage.exist_file(flipper_file_path):
+            self.logger.debug(f'"{flipper_file_path}" not exist, sending "{local_file_path}"')
+            self.logger.info(f'Sending "{local_file_path}" to "{flipper_file_path}"')
+            if not storage.send_file(local_file_path, flipper_file_path):
+                self.logger.error(f'Error: {storage.last_error}')
+        elif force:
+            self.logger.debug(f'"{flipper_file_path}" exist, but will be overwritten by "{local_file_path}"')
+            self.logger.info(f'Sending "{local_file_path}" to "{flipper_file_path}"')
+            if not storage.send_file(local_file_path, flipper_file_path):
+                self.logger.error(f'Error: {storage.last_error}')
+        else:
+            self.logger.debug(f'"{flipper_file_path}" exist, compare hash with "{local_file_path}"')
+            hash_local = storage.hash_local(local_file_path)
+            hash_flipper = storage.hash_flipper(flipper_file_path)
+
+            if not hash_flipper:
+                self.logger.error(f'Error: {storage.last_error}')
+
+            if hash_local == hash_flipper:
+                self.logger.debug(f'"{flipper_file_path}" are equal to "{local_file_path}"')
+            else:
+                self.logger.debug(f'"{flipper_file_path}" are not equal to "{local_file_path}"')
+                self.logger.info(f'Sending "{local_file_path}" to "{flipper_file_path}"')
+                if not storage.send_file(local_file_path, flipper_file_path):
+                    self.logger.error(f'Error: {storage.last_error}')
 
     def read(self):
         storage = FlipperStorage(self.args.port)
@@ -106,6 +197,17 @@ class Main:
             except:
                 print("Binary hexadecimal data:")
                 print(binascii.hexlify(data).decode())
+        storage.stop()
+
+    def size(self):
+        storage = FlipperStorage(self.args.port)
+        storage.start()
+        self.logger.debug(f'Getting size of "{self.args.flipper_path}"')
+        size = storage.size(self.args.flipper_path)
+        if size < 0:
+            self.logger.error(f'Error: {storage.last_error}')
+        else:
+            print(size)
         storage.stop()
 
     def list(self):
