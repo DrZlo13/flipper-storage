@@ -2,11 +2,7 @@ import filecmp
 import os
 import serial
 import time
-
-LOCAL_FILE = '1000k.txt'
-LOCAL_FILE_TMP = LOCAL_FILE + '.tmp'
-FILE_ON_FLIPPER = '/ext/' + LOCAL_FILE
-
+import hashlib
 
 def timing(func):
     """
@@ -16,10 +12,9 @@ def timing(func):
         time1 = time.monotonic()
         ret = func(*args, **kwargs)
         time2 = time.monotonic()
-        print('{:s} function took {:.3f} ms'.format(func, (time2 - time1) * 1000.0))
+        print('{:s} function took {:.3f} ms'.format(func.__name__, (time2 - time1) * 1000.0))
         return ret
     return wrapper
-
 
 class BufferedRead:
     def __init__(self, stream):
@@ -69,12 +64,24 @@ class FlipperStorage:
 
     def send_and_wait_eol(self, line):
         self.send(line)
-        self.read.until(self.CLI_EOL)
+        return self.read.until(self.CLI_EOL)
 
     def send_and_wait_prompt(self, line):
         self.send(line)
-        self.read.until(self.CLI_PROMPT)
+        return self.read.until(self.CLI_PROMPT)
 
+    # Is data has error
+    def has_error(self, data):
+        if data.find(b'Storage error') != -1:
+            return True
+        else:
+            return False
+
+    # Extract error text from data and print it
+    def get_error(self, data):
+        return data.decode('ascii').split(': ')[1].strip()
+
+    # List files and dirs on Flipper
     def list_tree(self, path="/", level=0):
         path = path.replace('//', '/')
 
@@ -85,7 +92,7 @@ class FlipperStorage:
 
         for line in data:
             try:
-                # TODO: better decoding, considering non-ascii characters, add an exception
+                # TODO: better decoding, considering non-ascii characters
                 line = line.decode("ascii")
             except:
                 continue
@@ -95,11 +102,8 @@ class FlipperStorage:
             if len(line) == 0:
                 continue
 
-            print('  ' * level, end='')
-
-            if line.find('Storage error') != -1:
-                line = line.split(': ')
-                print('Error: ' + line[1])
+            if(self.has_error(line.encode())):
+                print(self.get_error(line.encode()))
                 continue
 
             if line == 'Empty':
@@ -107,16 +111,25 @@ class FlipperStorage:
                 continue
 
             line = line.split(" ", 1)
-            if line[0] == '[D]':
-                print('/' + line[1])
+            if(line[0] == '[D]'):
+                # Print directory name
+                print((path + '/' + line[1]).replace('//', '/'))
+                # And recursively go inside
                 self.list_tree(path + '/' + line[1], level + 1)
-            else:
+            elif(line[0] == '[F]'):
                 line = line[1].rsplit(" ", 1)
-                print(line[0] + ', size ' + line[1])
+                # Print file name and size
+                print((path + '/' + line[0]).replace('//', '/') + ', size ' + line[1])
+            else:
+                # Somthing wrong
+                pass
 
-    @timing
+    # Send file from local device to Flipper
     def send_file(self, filename_from, filename_to):
-        self.send_and_wait_prompt('storage remove "' + filename_to + '"\r')
+        if self.remove(filename_to):
+            print('Removed "' + filename_to + '"' )
+
+        print('Sending "' + filename_from + '" > "' + filename_to + '"' )
 
         file = open(filename_from, 'rb')
         filesize = os.fstat(file.fileno()).st_size
@@ -129,8 +142,13 @@ class FlipperStorage:
                 break
 
             self.send_and_wait_eol('storage write_chunk "' + filename_to +  '" ' + str(size) + '\r')
-            self.read.until('Ready' + self.CLI_EOL)
-
+            error = self.read.until(self.CLI_EOL)
+            if(self.has_error(error)):
+                print(self.get_error(error))
+                self.read.until(self.CLI_PROMPT)
+                file.close()
+                return
+            
             self.port.write(filedata)
             self.read.until(self.CLI_PROMPT)
 
@@ -141,13 +159,18 @@ class FlipperStorage:
         file.close()
         print()
 
+    # Receive file from Flipper, and get filedata (bytes)
     def read_file(self, filename):
         buffer_size = 512
         self.send_and_wait_eol('storage read_chunks "' + filename + '" ' + str(buffer_size) + '\r')
         size = self.read.until(self.CLI_EOL)
+        filedata = bytearray()
+        if self.has_error(size):
+            print(self.get_error(size))
+            self.read.until(self.CLI_PROMPT)
+            return filedata
         size = int(size.split(b': ')[1])
         readed_size = 0
-        filedata = bytearray()
 
         while readed_size < size:
             self.read.until('Ready?' + self.CLI_EOL)
@@ -160,13 +183,71 @@ class FlipperStorage:
             total_chunks = str(round(size / buffer_size))
             current_chunk = str(round(readed_size / buffer_size))
             print(percent + '%, chunk ' + current_chunk + ' of ' + total_chunks, end='\r')
+        print()
+        self.read.until(self.CLI_PROMPT)
         return filedata
 
-    @timing
+    # Receive file from Flipper to local storage
     def receive_file(self, filename_from, filename_to):
         with open(filename_to, 'wb') as file:
             file.write(self.read_file(filename_from))
 
+    # Get hash of file on Flipper
+    def hash_file(self, filename):
+        self.send_and_wait_eol('storage md5 "' + filename + '"\r')
+        hash = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(hash):
+            print(self.get_error(hash))
+            return ''
+        else:
+            return hash.decode('ascii')
+
+    # Is file or dir exist on Flipper
+    def exist(self, path):
+        self.send_and_wait_eol('storage stat "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            return False
+        else:
+            return True
+
+    # Create a directory on Flipper
+    def mkdir(self, path):
+        self.send_and_wait_eol('storage mkdir "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            return False
+        else:
+            return True
+
+    # Remove file or directory on Flipper
+    def remove(self, path):
+        self.send_and_wait_eol('storage remove "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            return False
+        else:
+            return True
+
+# Hash of local file
+def md5(fname):
+    hash_md5 = hashlib.md5()
+    with open(fname, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+LOCAL_FILE = '.gitignore'
+LOCAL_FILE_TMP = LOCAL_FILE + '.tmp'
+FILE_ON_FLIPPER = '/ext/' + LOCAL_FILE
 
 if __name__ == '__main__':
     storage = FlipperStorage('COM16')
@@ -174,11 +255,16 @@ if __name__ == '__main__':
     storage.send_file(LOCAL_FILE, FILE_ON_FLIPPER)
     storage.receive_file(FILE_ON_FLIPPER, LOCAL_FILE_TMP)
 
+    hash = storage.hash_file(FILE_ON_FLIPPER)
+    if(hash): print(hash)
+
+    print(md5(LOCAL_FILE))
+
     if filecmp.cmp(LOCAL_FILE, LOCAL_FILE_TMP, False):
         print('OK')
     else:
         print('Error')
     os.remove(LOCAL_FILE_TMP)
 
-    # file.list_tree()
+    storage.list_tree()
     storage.stop()
