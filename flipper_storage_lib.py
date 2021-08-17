@@ -2,6 +2,7 @@ import os
 import serial
 import time
 import hashlib
+import math
 
 def timing(func):
     """
@@ -107,7 +108,6 @@ class FlipperStorage:
                 continue
 
             if line == 'Empty':
-                print('Empty')
                 continue
 
             line = line.split(" ", 1)
@@ -144,17 +144,18 @@ class FlipperStorage:
                 self.last_error = self.get_error(error)
                 self.read.until(self.CLI_PROMPT)
                 file.close()
-                return
-            
+                return False
+
             self.port.write(filedata)
             self.read.until(self.CLI_PROMPT)
 
-            percent = str(round(file.tell() / filesize * 100))
-            total_chunks = str(round(filesize / buffer_size))
-            current_chunk = str(round(file.tell() / buffer_size))
+            percent = str(math.ceil(file.tell() / filesize * 100))
+            total_chunks = str(math.ceil(filesize / buffer_size))
+            current_chunk = str(math.ceil(file.tell() / buffer_size))
             print(percent + '%, chunk ' + current_chunk + ' of ' + total_chunks, end='\r')
         file.close()
         print()
+        return True
 
     # Receive file from Flipper, and get filedata (bytes)
     def read_file(self, filename):
@@ -176,9 +177,9 @@ class FlipperStorage:
             filedata.extend(self.port.read(read_size))
             readed_size = readed_size + read_size
 
-            percent = str(round(readed_size / size * 100))
-            total_chunks = str(round(size / buffer_size))
-            current_chunk = str(round(readed_size / buffer_size))
+            percent = str(math.ceil(readed_size / size * 100))
+            total_chunks = str(math.ceil(size / buffer_size))
+            current_chunk = str(math.ceil(readed_size / buffer_size))
             print(percent + '%, chunk ' + current_chunk + ' of ' + total_chunks, end='\r')
         print()
         self.read.until(self.CLI_PROMPT)
@@ -187,7 +188,12 @@ class FlipperStorage:
     # Receive file from Flipper to local storage
     def receive_file(self, filename_from, filename_to):
         with open(filename_to, 'wb') as file:
-            file.write(self.read_file(filename_from))
+            data = self.read_file(filename_from)
+            if not data:
+                return False
+            else:
+                file.write(data)
+                return True
 
     # Get hash of file on Flipper
     def hash_flipper(self, filename):
