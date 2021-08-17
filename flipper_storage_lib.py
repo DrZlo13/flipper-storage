@@ -124,6 +124,55 @@ class FlipperStorage:
                 # Somthing wrong
                 pass
 
+    def walk(self, path="/"):
+        dirs = []
+        nondirs = []
+        walk_dirs = []
+
+        path = path.replace('//', '/')
+        self.send_and_wait_eol('storage list "' + path + '"\r')
+        data = self.read.until(self.CLI_PROMPT)
+        data = data.split(b'\r\n')
+
+        for line in data:
+            try:
+                # TODO: better decoding, considering non-ascii characters
+                line = line.decode("ascii")
+            except:
+                continue
+
+            line = line.strip()
+
+            if len(line) == 0:
+                continue
+
+            if self.has_error(line.encode()):
+                print(self.get_error(line.encode()))
+                continue
+
+            if line == 'Empty':
+                continue
+
+            line = line.split(" ", 1)
+            if line[0] == '[D]':
+                # Print directory name
+                dirs.append(line[1])
+                walk_dirs.append((path + '/' + line[1]).replace('//', '/'))
+                # print((path + '/' + line[1]).replace('//', '/'))
+
+            elif line[0] == '[F]':
+                line = line[1].rsplit(" ", 1)
+                # Print file name and size
+                nondirs.append(line[0])
+                # print((path + '/' + line[0]).replace('//', '/') + ', size ' + line[1])
+            else:
+                # Somthing wrong
+                pass
+        
+        yield path, dirs, nondirs
+        for new_path in walk_dirs:
+            yield from self.walk(new_path)
+
     # Send file from local device to Flipper
     def send_file(self, filename_from, filename_to):
         self.remove(filename_to)
@@ -195,18 +244,6 @@ class FlipperStorage:
                 file.write(data)
                 return True
 
-    # Get hash of file on Flipper
-    def hash_flipper(self, filename):
-        self.send_and_wait_eol('storage md5 "' + filename + '"\r')
-        hash = self.read.until(self.CLI_EOL)
-        self.read.until(self.CLI_PROMPT)
-
-        if self.has_error(hash):
-            self.last_error = self.get_error(hash)
-            return ''
-        else:
-            return hash.decode('ascii')
-
     # Is file or dir exist on Flipper
     def exist(self, path):
         self.send_and_wait_eol('storage stat "' + path + '"\r')
@@ -218,6 +255,55 @@ class FlipperStorage:
             return False
         else:
             return True
+
+    # Is dir exist on Flipper
+    def exist_dir(self, path):
+        self.send_and_wait_eol('storage stat "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            self.last_error = self.get_error(answer)
+            return False
+        else:
+            if answer.find(b'Directory') != -1:
+                return True
+            elif answer.find(b'Storage') != -1:
+                return True
+            else: 
+                return False
+
+    # Is file exist on Flipper
+    def exist_file(self, path):
+        self.send_and_wait_eol('storage stat "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            self.last_error = self.get_error(answer)
+            return False
+        else:
+            if answer.find(b'File, size:') != -1:
+                return True
+            else: 
+                return False
+
+    # file size on Flipper
+    def size(self, path):
+        self.send_and_wait_eol('storage stat "' + path + '"\r')
+        answer = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(answer):
+            self.last_error = self.get_error(answer)
+            return False
+        else:
+            if answer.find(b'File, size:') != -1:
+                size = int(''.join(ch for ch in answer.split(b': ')[1].decode() if ch.isdigit()))
+                return size
+            else:
+                self.last_error = 'access denied'
+                return -1
 
     # Create a directory on Flipper
     def mkdir(self, path):
@@ -250,4 +336,16 @@ class FlipperStorage:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
+
+    # Get hash of file on Flipper
+    def hash_flipper(self, filename):
+        self.send_and_wait_eol('storage md5 "' + filename + '"\r')
+        hash = self.read.until(self.CLI_EOL)
+        self.read.until(self.CLI_PROMPT)
+
+        if self.has_error(hash):
+            self.last_error = self.get_error(hash)
+            return ''
+        else:
+            return hash.decode('ascii')
 
