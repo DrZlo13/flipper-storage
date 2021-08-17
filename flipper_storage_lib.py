@@ -1,4 +1,3 @@
-import filecmp
 import os
 import serial
 import time
@@ -51,6 +50,7 @@ class FlipperStorage:
         self.port.timeout = 2
         self.port.baudrate = 115200
         self.read = BufferedRead(self.port)
+        self.last_error = ''
 
     def start(self):
         self.port.open()
@@ -102,7 +102,7 @@ class FlipperStorage:
             if len(line) == 0:
                 continue
 
-            if(self.has_error(line.encode())):
+            if self.has_error(line.encode()):
                 print(self.get_error(line.encode()))
                 continue
 
@@ -111,12 +111,12 @@ class FlipperStorage:
                 continue
 
             line = line.split(" ", 1)
-            if(line[0] == '[D]'):
+            if line[0] == '[D]':
                 # Print directory name
                 print((path + '/' + line[1]).replace('//', '/'))
                 # And recursively go inside
                 self.list_tree(path + '/' + line[1], level + 1)
-            elif(line[0] == '[F]'):
+            elif line[0] == '[F]':
                 line = line[1].rsplit(" ", 1)
                 # Print file name and size
                 print((path + '/' + line[0]).replace('//', '/') + ', size ' + line[1])
@@ -126,11 +126,8 @@ class FlipperStorage:
 
     # Send file from local device to Flipper
     def send_file(self, filename_from, filename_to):
-        if self.remove(filename_to):
-            print('Removed "' + filename_to + '"' )
-
-        print('Sending "' + filename_from + '" > "' + filename_to + '"' )
-
+        self.remove(filename_to)
+        
         file = open(filename_from, 'rb')
         filesize = os.fstat(file.fileno()).st_size
 
@@ -143,8 +140,8 @@ class FlipperStorage:
 
             self.send_and_wait_eol('storage write_chunk "' + filename_to +  '" ' + str(size) + '\r')
             error = self.read.until(self.CLI_EOL)
-            if(self.has_error(error)):
-                print(self.get_error(error))
+            if self.has_error(error):
+                self.last_error = self.get_error(error)
                 self.read.until(self.CLI_PROMPT)
                 file.close()
                 return
@@ -166,7 +163,7 @@ class FlipperStorage:
         size = self.read.until(self.CLI_EOL)
         filedata = bytearray()
         if self.has_error(size):
-            print(self.get_error(size))
+            self.last_error = self.get_error(size)
             self.read.until(self.CLI_PROMPT)
             return filedata
         size = int(size.split(b': ')[1])
@@ -193,13 +190,13 @@ class FlipperStorage:
             file.write(self.read_file(filename_from))
 
     # Get hash of file on Flipper
-    def hash_file(self, filename):
+    def hash_flipper(self, filename):
         self.send_and_wait_eol('storage md5 "' + filename + '"\r')
         hash = self.read.until(self.CLI_EOL)
         self.read.until(self.CLI_PROMPT)
 
         if self.has_error(hash):
-            print(self.get_error(hash))
+            self.last_error = self.get_error(hash)
             return ''
         else:
             return hash.decode('ascii')
@@ -211,6 +208,7 @@ class FlipperStorage:
         self.read.until(self.CLI_PROMPT)
 
         if self.has_error(answer):
+            self.last_error = self.get_error(answer)
             return False
         else:
             return True
@@ -222,6 +220,7 @@ class FlipperStorage:
         self.read.until(self.CLI_PROMPT)
 
         if self.has_error(answer):
+            self.last_error = self.get_error(answer)
             return False
         else:
             return True
@@ -233,38 +232,16 @@ class FlipperStorage:
         self.read.until(self.CLI_PROMPT)
 
         if self.has_error(answer):
+            self.last_error = self.get_error(answer)
             return False
         else:
             return True
 
-# Hash of local file
-def md5(fname):
-    hash_md5 = hashlib.md5()
-    with open(fname, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
+    # Hash of local file
+    def hash_local(self, filename):
+        hash_md5 = hashlib.md5()
+        with open(filename, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
 
-LOCAL_FILE = '.gitignore'
-LOCAL_FILE_TMP = LOCAL_FILE + '.tmp'
-FILE_ON_FLIPPER = '/ext/' + LOCAL_FILE
-
-if __name__ == '__main__':
-    storage = FlipperStorage('COM16')
-    storage.start()
-    storage.send_file(LOCAL_FILE, FILE_ON_FLIPPER)
-    storage.receive_file(FILE_ON_FLIPPER, LOCAL_FILE_TMP)
-
-    hash = storage.hash_file(FILE_ON_FLIPPER)
-    if(hash): print(hash)
-
-    print(md5(LOCAL_FILE))
-
-    if filecmp.cmp(LOCAL_FILE, LOCAL_FILE_TMP, False):
-        print('OK')
-    else:
-        print('Error')
-    os.remove(LOCAL_FILE_TMP)
-
-    storage.list_tree()
-    storage.stop()
