@@ -4,17 +4,21 @@ import time
 import hashlib
 import math
 
+
 def timing(func):
     """
     Speedometer decorator
     """
+
     def wrapper(*args, **kwargs):
         time1 = time.monotonic()
         ret = func(*args, **kwargs)
         time2 = time.monotonic()
         print('{:s} function took {:.3f} ms'.format(func.__name__, (time2 - time1) * 1000.0))
         return ret
+
     return wrapper
+
 
 class BufferedRead:
     def __init__(self, stream):
@@ -72,14 +76,16 @@ class FlipperStorage:
         return self.read.until(self.CLI_PROMPT)
 
     # Is data has error
-    def has_error(self, data):
+    @staticmethod
+    def has_error(data):
         if data.find(b'Storage error') != -1:
             return True
         else:
             return False
 
     # Extract error text from data and print it
-    def get_error(self, data):
+    @staticmethod
+    def get_error(data):
         return data.decode('ascii').split(': ')[1].strip()
 
     # List files and dirs on Flipper
@@ -95,7 +101,7 @@ class FlipperStorage:
             try:
                 # TODO: better decoding, considering non-ascii characters
                 line = line.decode("ascii")
-            except:
+            except:  # it hurts right here in my meow meow
                 continue
 
             line = line.strip()
@@ -168,7 +174,7 @@ class FlipperStorage:
             else:
                 # Somthing wrong
                 pass
-        
+
         yield path, dirs, nondirs
         for new_path in walk_dirs:
             yield from self.walk(new_path)
@@ -176,7 +182,7 @@ class FlipperStorage:
     # Send file from local device to Flipper
     def send_file(self, filename_from, filename_to):
         self.remove(filename_to)
-        
+
         file = open(filename_from, 'rb')
         filesize = os.fstat(file.fileno()).st_size
 
@@ -187,7 +193,7 @@ class FlipperStorage:
             if size == 0:
                 break
 
-            self.send_and_wait_eol('storage write_chunk "' + filename_to +  '" ' + str(size) + '\r')
+            self.send_and_wait_eol('storage write_chunk "' + filename_to + '" ' + str(size) + '\r')
             error = self.read.until(self.CLI_EOL)
             if self.has_error(error):
                 self.last_error = self.get_error(error)
@@ -270,7 +276,7 @@ class FlipperStorage:
                 return True
             elif answer.find(b'Storage') != -1:
                 return True
-            else: 
+            else:
                 return False
 
     # Is file exist on Flipper
@@ -285,7 +291,7 @@ class FlipperStorage:
         else:
             if answer.find(b'File, size:') != -1:
                 return True
-            else: 
+            else:
                 return False
 
     # file size on Flipper
@@ -330,7 +336,8 @@ class FlipperStorage:
             return True
 
     # Hash of local file
-    def hash_local(self, filename):
+    @staticmethod
+    def hash_local(filename):
         hash_md5 = hashlib.md5()
         with open(filename, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
@@ -348,4 +355,3 @@ class FlipperStorage:
             return ''
         else:
             return hash.decode('ascii')
-
