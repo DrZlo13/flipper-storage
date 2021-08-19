@@ -6,6 +6,7 @@ import sys
 import binascii
 import posixpath
 
+
 class Main:
     def __init__(self):
         # command args
@@ -82,7 +83,7 @@ class Main:
     def receive(self):
         storage = FlipperStorage(self.args.port)
         storage.start()
-        
+
         if storage.exist_dir(self.args.flipper_path):
             for dirpath, dirnames, filenames in storage.walk(self.args.flipper_path):
                 self.logger.debug(f'Processing directory "{os.path.normpath(dirpath)}"'.replace(os.sep, '/'))
@@ -103,7 +104,7 @@ class Main:
                     self.logger.info(f'Receiving "{flipper_file_path}" to "{local_file_path}"')
                     if not storage.receive_file(flipper_file_path, local_file_path):
                         self.logger.error(f'Error: {storage.last_error}')
-                    
+
         else:
             self.logger.info(f'Receiving "{self.args.flipper_path}" to "{self.args.local_path}"')
             if not storage.receive_file(self.args.flipper_path, self.args.local_path):
@@ -216,6 +217,7 @@ class Main:
         self.logger.debug(f'Listing "{self.args.flipper_path}"')
         storage.list_tree(self.args.flipper_path)
         storage.stop()
+
 
 if __name__ == "__main__":
     Main()()
